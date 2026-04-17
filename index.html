@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>График смен ПВЗ</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Arial,sans-serif;background:#f5f5f5;color:#222;font-size:13px}
+.header{background:#2e86de;color:#fff;padding:12px 20px;display:flex;align-items:center;justify-content:space-between}
+.header h1{font-size:16px;font-weight:600}
+.user-info{font-size:12px;opacity:.85}
+.container{padding:16px}
+.bar{display:flex;gap:10px;align-items:center;background:#fff;padding:12px;border-radius:8px;margin-bottom:12px;border:1px solid #ddd;flex-wrap:wrap}
+select,input{height:30px;padding:0 8px;border:1px solid #bbb;border-radius:5px;font-size:13px;background:#fff;color:#222}
+.btn{padding:5px 14px;font-size:13px;border:1px solid #bbb;border-radius:6px;background:#fff;cursor:pointer;height:30px}
+.btn.blue{background:#2e86de;color:#fff;border-color:#2e86de}
+.btn.grn{background:#0a7a4a;color:#fff;border-color:#0a7a4a}
+.btn:hover{opacity:.85}
+.calendar-wrap{overflow-x:auto;background:#fff;border-radius:8px;border:1px solid #ddd}
+table{border-collapse:collapse;width:100%;min-width:900px}
+th{background:#f0f0f0;font-size:11px;font-weight:700;color:#444;padding:7px 5px;border:1px solid #ddd;text-align:center;white-space:nowrap;min-width:32px}
+th.name-col{text-align:left;min-width:140px;padding-left:10px}
+td{padding:3px;border:1px solid #eee;text-align:center;vertical-align:middle}
+td.name-cell{text-align:left;padding:5px 10px;font-size:12px;white-space:nowrap;background:#fafafa}
+td.pvz-cell{font-size:11px;color:#888;padding:5px 6px;background:#fafafa;white-space:nowrap}
+.day-cell{width:32px;height:28px;cursor:pointer;border-radius:4px;transition:.15s}
+.day-cell:hover{background:#e8f4fd}
+.day-cell.worked{background:#2e86de;color:#fff;border-radius:4px}
+.day-cell.worked:hover{background:#1a6dbf}
+.day-cell.past{cursor:not-allowed}
+.day-cell.past:hover{background:transparent}
+.day-cell.past.worked{background:#0a7a4a;cursor:default}
+.day-cell.pending{background:#f0a500;color:#fff;border-radius:4px}
+.day-cell.weekend{background:#fafafa;color:#ccc}
+.day-cell.weekend.worked{background:#2e86de;color:#fff}
+.day-cell.today-col{font-weight:700}
+th.today-col{background:#2e86de;color:#fff}
+.legend{display:flex;gap:16px;font-size:11px;color:#666;margin-top:8px;flex-wrap:wrap}
+.legend span{display:flex;align-items:center;gap:4px}
+.dot{width:12px;height:12px;border-radius:3px;flex-shrink:0}
+.modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:100;align-items:center;justify-content:center}
+.modal.show{display:flex}
+.modal-box{background:#fff;border-radius:10px;padding:24px;width:320px;box-shadow:0 4px 20px rgba(0,0,0,.15)}
+.modal-box h3{margin-bottom:12px;font-size:15px}
+.modal-box p{font-size:13px;color:#555;margin-bottom:16px}
+.modal-btns{display:flex;gap:8px;justify-content:flex-end}
+.status{font-size:12px;color:#888;margin-top:8px}
+.status.ok{color:#0a7a4a}
+.requests-badge{background:#e74c3c;color:#fff;border-radius:10px;padding:2px 7px;font-size:11px;margin-left:6px}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>График смен ПВЗ</h1>
+  <div class="user-info" id="userInfo">Загрузка...</div>
+</div>
+
+<div class="container">
+  <div class="bar">
+    <select id="monthSel"></select>
+    <select id="yearSel">
+      <option>2025</option>
+      <option selected>2026</option>
+    </select>
+    <button class="btn blue" onclick="renderCalendar()">Показать</button>
+    <span id="adminBtns" style="display:none;gap:8px;display:none">
+      <button class="btn grn" onclick="saveShifts()">💾 Сохранить</button>
+      <button class="btn" onclick="showRequests()" id="reqBtn">📋 Запросы <span class="requests-badge" id="reqCount" style="display:none">0</span></button>
+    </span>
+    <button class="btn grn" id="empSaveBtn" style="display:none" onclick="saveShifts()">💾 Отметить смены</button>
+    <div class="status" id="status"></div>
+  </div>
+
+  <div class="calendar-wrap">
+    <table id="calTable"><thead></thead><tbody></tbody></table>
+  </div>
+
+  <div class="legend">
+    <span><div class="dot" style="background:#2e86de"></div> Смена отработана</span>
+    <span><div class="dot" style="background:#0a7a4a"></div> Подтверждено (прошлое)</span>
+    <span><div class="dot" style="background:#f0a500"></div> Запрос на изменение</span>
+    <span><div class="dot" style="background:#eee"></div> Выходной</span>
+  </div>
+</div>
+
+<!-- Модальное окно подтверждения -->
+<div class="modal" id="modal">
+  <div class="modal-box">
+    <h3 id="modalTitle">Запрос на изменение</h3>
+    <p id="modalText"></p>
+    <div class="modal-btns">
+      <button class="btn" onclick="closeModal()">Отмена</button>
+      <button class="btn blue" id="modalConfirm">Подтвердить</button>
+    </div>
+  </div>
+</div>
+
+<script>
+var CLIENT_ID='local.69e229d4094968.94760716';
+var DOMAIN='b24-hyrqwm.bitrix24.ru';
+var ADMIN_ID=1; // ID администратора (Виктор Рассыльных)
+
+var currentUser=null;
+var isAdmin=false;
+var shifts={}; // {userId_date: true/false}
+var requests=[]; // запросы на изменение прошлых смен
+var employees=[];
+
+// Инициализация через BX24
+window.onload=function(){
+  var months=['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+  var sel=document.getElementById('monthSel');
+  months.forEach(function(m,i){var o=document.createElement('option');o.value=i+1;o.text=m;sel.appendChild(o)});
+  sel.value=new Date().getMonth()+1;
+
+  // Попытка инициализации через BX24
+  if(typeof BX24!=='undefined'){
+    BX24.init(function(){
+      BX24.callMethod('user.current',{},function(res){
+        if(res.data()){
+          currentUser=res.data();
+          isAdmin=(+currentUser.ID===ADMIN_ID);
+          document.getElementById('userInfo').innerText=(currentUser.LAST_NAME||'')+' '+(currentUser.NAME||'');
+          initUI();
+          loadEmployees();
+        }
+      });
+    });
+  } else {
+    // Демо режим без BX24
+    currentUser={ID:ADMIN_ID,NAME:'Виктор',LAST_NAME:'Рассыльных'};
+    isAdmin=true;
+    document.getElementById('userInfo').innerText='Виктор Рассыльных (демо)';
+    initUI();
+    loadEmployeesFallback();
+  }
+  loadShifts();
+  loadRequests();
+};
+
+function initUI(){
+  if(isAdmin){
+    document.getElementById('adminBtns').style.display='flex';
+    document.getElementById('empSaveBtn').style.display='none';
+  } else {
+    document.getElementById('adminBtns').style.display='none';
+    document.getElementById('empSaveBtn').style.display='block';
+  }
+  renderCalendar();
+}
+
+function loadEmployees(){
+  BX24.callMethod('user.get',{ACTIVE:true},function(res){
+    var SKIP=[1,3,5,51,53,55];
+    var DEPTS={"7":{"n":"28","a":"Р.Зорге 96а"},"11":{"n":"54","a":"Октябрьская 020"},"13":{"n":"9","a":"Октябрьская 93"},"17":{"n":"26","a":"Осипенко 142"},"19":{"n":"27","a":"Комсомольская 84"},"21":{"n":"29","a":"Ленина 192"},"23":{"n":"33","a":"Алтайская 167"},"25":{"n":"34","a":"Менделеева 1"},"27":{"n":"44","a":"Краснознаменская 84"},"29":{"n":"45","a":"Пролетарская 401"},"31":{"n":"53","a":"Красная 64"},"33":{"n":"55","a":"Октябрьская 102"},"35":{"n":"58","a":"Ленина 60"},"37":{"n":"68","a":"Комсомольская 106"},"39":{"n":"72","a":"Гражданский 18"},"41":{"n":"73","a":"Пролетарская 391"},"43":{"n":"74","a":"Ленина 265"},"45":{"n":"79","a":"Алтайская 191"},"49":{"n":"83","a":"Гражданский 50"},"57":{"n":"","a":"Арычная 21"},"15":{"n":"10","a":"Северная 23"}};
+    if(res.data()){
+      employees=res.data().filter(function(u){
+        var d=u.UF_DEPARTMENT&&u.UF_DEPARTMENT[0];
+        return d&&SKIP.indexOf(+d)===-1;
+      }).map(function(u){
+        var did=u.UF_DEPARTMENT&&u.UF_DEPARTMENT[0];
+        var dept=DEPTS[did]||{n:'',a:'—'};
+        return {id:u.ID,name:((u.LAST_NAME||'')+' '+(u.NAME||'')).trim(),pvzNum:dept.n,pvzAddr:dept.a};
+      });
+      employees.sort(function(a,b){return (+a.pvzNum||0)-(+b.pvzNum||0)});
+      renderCalendar();
+    }
+  });
+}
+
+function loadEmployeesFallback(){
+  employees=[
+    {id:19,name:'Смолянина Елена',pvzNum:'28',pvzAddr:'Р.Зорге 96а'},
+    {id:37,name:'ШПАКОВА СВЕТЛАНА',pvzNum:'28',pvzAddr:'Р.Зорге 96а'},
+    {id:35,name:'Горбачева Анастасия',pvzNum:'54',pvzAddr:'Октябрьская 020'},
+    {id:117,name:'Азимова Диана',pvzNum:'54',pvzAddr:'Октябрьская 020'},
+    {id:53,name:'Амзина Алина',pvzNum:'9',pvzAddr:'Октябрьская 93'},
+    {id:193,name:'Екатерина',pvzNum:'9',pvzAddr:'Октябрьская 93'},
+    {id:31,name:'Барсукова Наталья',pvzNum:'10',pvzAddr:'Северная 23'},
+    {id:83,name:'Латкина Ольга',pvzNum:'10',pvzAddr:'Северная 23'},
+    {id:185,name:'Аникина Кристина',pvzNum:'26',pvzAddr:'Осипенко 142'},
+    {id:187,name:'Голубцова Валя',pvzNum:'26',pvzAddr:'Осипенко 142'},
+    {id:33,name:'Власова Кира',pvzNum:'27',pvzAddr:'Комсомольская 84'},
+    {id:45,name:'Поломошнов Расул',pvzNum:'29',pvzAddr:'Ленина 192'},
+    {id:55,name:'Ивкин Кирилл',pvzNum:'29',pvzAddr:'Ленина 192'},
+    {id:39,name:'Журавлева Белла',pvzNum:'34',pvzAddr:'Менделеева 1'},
+    {id:165,name:'Дарья',pvzNum:'34',pvzAddr:'Менделеева 1'},
+    {id:105,name:'Коренченко Виктория',pvzNum:'33',pvzAddr:'Алтайская 167'},
+    {id:155,name:'Козлова Анастасия',pvzNum:'33',pvzAddr:'Алтайская 167'},
+    {id:41,name:'Яна',pvzNum:'58',pvzAddr:'Ленина 60'},
+    {id:179,name:'Дубровина Саша',pvzNum:'58',pvzAddr:'Ленина 60'},
+    {id:49,name:'Борисова Надежда',pvzNum:'44',pvzAddr:'Краснознаменская 84'},
+    {id:189,name:'Гришечко Анастасия',pvzNum:'44',pvzAddr:'Краснознаменская 84'},
+    {id:51,name:'Джумаева Арина',pvzNum:'45',pvzAddr:'Пролетарская 401'},
+    {id:175,name:'Бекетова Светлана',pvzNum:'45',pvzAddr:'Пролетарская 401'},
+    {id:43,name:'Бережных Евгения',pvzNum:'53',pvzAddr:'Красная 64'},
+    {id:123,name:'Неждова Надежда',pvzNum:'53',pvzAddr:'Красная 64'},
+    {id:109,name:'Поломошнова Виолета',pvzNum:'55',pvzAddr:'Октябрьская 102'},
+    {id:145,name:'Михайлова Елизавета',pvzNum:'55',pvzAddr:'Октябрьская 102'},
+    {id:147,name:'Надточеева Виктория',pvzNum:'68',pvzAddr:'Комсомольская 106'},
+    {id:27,name:'Беседина Софья',pvzNum:'72',pvzAddr:'Гражданский 18'},
+    {id:89,name:'Урюмцева Дарья',pvzNum:'72',pvzAddr:'Гражданский 18'},
+    {id:183,name:'Вершинин Захар',pvzNum:'73',pvzAddr:'Пролетарская 391'},
+    {id:175,name:'Бекетова Светлана',pvzNum:'73',pvzAddr:'Пролетарская 391'},
+    {id:17,name:'Прядкин Юрий',pvzNum:'74',pvzAddr:'Ленина 265'},
+    {id:101,name:'Лисиченко Алёна',pvzNum:'74',pvzAddr:'Ленина 265'},
+    {id:75,name:'Малюбаева Наталья',pvzNum:'79',pvzAddr:'Алтайская 191'},
+    {id:173,name:'Козлова Ольга',pvzNum:'79',pvzAddr:'Алтайская 191'},
+    {id:57,name:'Сайбель Алина',pvzNum:'83',pvzAddr:'Гражданский 50'},
+    {id:169,name:'Горячева Лиза',pvzNum:'83',pvzAddr:'Гражданский 50'},
+    {id:167,name:'Круговых Ирина',pvzNum:'',pvzAddr:'Арычная 21'},
+    {id:191,name:'Маланцев Семён',pvzNum:'',pvzAddr:'Арычная 21'}
+  ];
+  renderCalendar();
+}
+
+function loadShifts(){
+  try{var s=localStorage.getItem('pvz_shifts');if(s)shifts=JSON.parse(s)}catch(e){}
+}
+function loadRequests(){
+  try{var r=localStorage.getItem('pvz_requests');if(r)requests=JSON.parse(r)}catch(e){}
+  updateReqBadge();
+}
+function saveShifts(){
+  localStorage.setItem('pvz_shifts',JSON.stringify(shifts));
+  localStorage.setItem('pvz_requests',JSON.stringify(requests));
+  setStatus('✓ Сохранено',true);
+}
+function updateReqBadge(){
+  var pending=requests.filter(function(r){return r.status==='pending'});
+  var badge=document.getElementById('reqCount');
+  if(pending.length>0){badge.style.display='';badge.innerText=pending.length}
+  else badge.style.display='none';
+}
+function setStatus(msg,ok){var el=document.getElementById('status');el.innerText=msg;el.className='status'+(ok?' ok':'')}
+
+function renderCalendar(){
+  var m=+document.getElementById('monthSel').value;
+  var y=+document.getElementById('yearSel').value;
+  var daysInMonth=new Date(y,m,0).getDate();
+  var today=new Date();
+  var todayStr=today.getFullYear()+'-'+pad(today.getMonth()+1)+'-'+pad(today.getDate());
+
+  var thead=document.querySelector('#calTable thead');
+  var tbody=document.querySelector('#calTable tbody');
+  thead.innerHTML='';tbody.innerHTML='';
+
+  // Заголовок
+  var hrow=document.createElement('tr');
+  hrow.innerHTML='<th class="name-col">Сотрудник</th><th class="name-col" style="min-width:120px">ПВЗ</th>';
+  for(var d=1;d<=daysInMonth;d++){
+    var dt=new Date(y,m-1,d);
+    var dateStr=y+'-'+pad(m)+'-'+pad(d);
+    var dow=dt.getDay();
+    var isWeekend=dow===0||dow===6;
+    var isToday=dateStr===todayStr;
+    var th=document.createElement('th');
+    th.className=(isToday?'today-col ':'')+(isWeekend?'weekend':'');
+    th.innerHTML='<div>'+['Вс','Пн','Вт','Ср','Чт','Пт','Сб'][dow]+'</div><div>'+d+'</div>';
+    hrow.appendChild(th);
+  }
+  hrow.innerHTML+='<th>Смен</th>';
+  thead.appendChild(hrow);
+
+  // Строки сотрудников
+  var empsToShow=isAdmin?employees:employees.filter(function(e){return +e.id===+currentUser.ID});
+  
+  empsToShow.forEach(function(emp){
+    var tr=document.createElement('tr');
+    var shiftCount=0;
+    var cells='<td class="name-cell">'+emp.name+'</td>';
+    cells+='<td class="pvz-cell">'+(emp.pvzNum?'№'+emp.pvzNum+' ':'')+emp.pvzAddr+'</td>';
+
+    for(var d=1;d<=daysInMonth;d++){
+      var dateStr=y+'-'+pad(m)+'-'+pad(d);
+      var key=emp.id+'_'+dateStr;
+      var dt=new Date(y,m-1,d);
+      var dow=dt.getDay();
+      var isWeekend=dow===0||dow===6;
+      var isPast=dateStr<todayStr;
+      var isToday=dateStr===todayStr;
+      var worked=shifts[key]===true;
+      var hasPending=requests.some(function(r){return r.key===key&&r.status==='pending'});
+
+      if(worked) shiftCount++;
+
+      var cls='day-cell';
+      if(isWeekend) cls+=' weekend';
+      if(isPast&&!isToday) cls+=' past';
+      if(worked) cls+=' worked';
+      if(hasPending) cls+=' pending';
+
+      var canClick=isAdmin||(+emp.id===+currentUser.ID&&(!isPast||isToday));
+      var onclick='';
+      if(canClick){
+        if(isPast&&!isToday&&!isAdmin){
+          onclick='requestChange("'+key+'","'+emp.name+'","'+dateStr+'")';
+        } else {
+          onclick='toggleShift("'+key+'")';
+        }
+      }
+
+      cells+='<td><div class="'+cls+'"'+(onclick?' onclick=\''+onclick+'\'':(isPast&&!isAdmin?' title="Нельзя изменить прошлую смену без согласования"':''))+'>'+
+        (worked?'✓':'')+'</div></td>';
+    }
+    cells+='<td class="pvz-cell" style="font-weight:600;color:#2e86de">'+shiftCount+'</td>';
+    tr.innerHTML=cells;
+    tbody.appendChild(tr);
+  });
+}
+
+function pad(n){return n<10?'0'+n:n}
+
+function toggleShift(key){
+  shifts[key]=!shifts[key];
+  renderCalendar();
+}
+
+var pendingAction=null;
+function requestChange(key,name,date){
+  pendingAction={key:key,name:name,date:date};
+  document.getElementById('modalTitle').innerText='Запрос на изменение смены';
+  document.getElementById('modalText').innerText='Вы хотите изменить смену '+name+' за '+date+'. Это запрос требует одобрения администратора.';
+  document.getElementById('modalConfirm').onclick=function(){
+    requests.push({key:key,name:name,date:date,userId:currentUser.ID,status:'pending',created:new Date().toISOString()});
+    saveShifts();
+    updateReqBadge();
+    closeModal();
+    setStatus('Запрос отправлен администратору',true);
+  };
+  document.getElementById('modal').className='modal show';
+}
+
+function closeModal(){document.getElementById('modal').className='modal'}
+
+function showRequests(){
+  var pending=requests.filter(function(r){return r.status==='pending'});
+  if(!pending.length){setStatus('Нет новых запросов');return}
+  var r=pending[0];
+  document.getElementById('modalTitle').innerText='Запрос на изменение';
+  document.getElementById('modalText').innerText=r.name+' просит изменить смену за '+r.date+'. Одобрить?';
+  document.getElementById('modalConfirm').innerText='Одобрить';
+  document.getElementById('modalConfirm').onclick=function(){
+    shifts[r.key]=!shifts[r.key];
+    r.status='approved';
+    saveShifts();
+    updateReqBadge();
+    closeModal();
+    renderCalendar();
+    setStatus('Запрос одобрен',true);
+  };
+  document.getElementById('modal').className='modal show';
+}
+</script>
+<!-- Подключаем BX24 JS SDK -->
+<script src="//api.bitrix24.com/api/v1/"></script>
+</body>
+</html>
